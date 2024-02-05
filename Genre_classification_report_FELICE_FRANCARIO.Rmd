@@ -1,0 +1,1815 @@
+---
+title: "Spotify Genre Classification- Statistical Learning Project"
+author: "Felice Francario"
+font: 12pt
+output: 
+  pdf_document:
+    number_sections: yes
+    latex_engine: pdflatex 
+    toc: true   
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library("dplyr")
+library(ggplot2)
+library(patchwork)
+library(gplots)
+library(glmnet)
+library(caret)
+library(pROC)
+library(nnet)
+library(tinytex)
+```
+
+#  Introduction
+
+The objective of this project is to analyze the diverse landscape of music genres and develop a classification model capable of predicting the genre of a song based on its audio features. Music, as a universal form of expression, encompasses a vast array of genres, each characterized by distinct musical elements, themes, and emotions. Understanding and classifying these genres is not only valuable for music enthusiasts and artists but also holds significant implications for music recommendation systems, content curation, and genre-specific analysis.
+
+The proliferation of digital music platforms and streaming services has led to an exponential growth in the availability and accessibility of music across genres. However, manually categorizing and organizing this vast musical repertoire is a daunting task. Automated classification models offer a promising solution by leveraging machine learning algorithms to discern patterns and relationships among audio features and genre labels.
+
+In this project, we embark on a comprehensive exploration of music genres, drawing insights from a dataset of songs spanning diverse genres and cultural influences. By analyzing key audio features such as tempo, energy, danceability, and instrumentalness, we aim to uncover the underlying characteristics that distinguish one genre from another.
+
+Our primary goal is to develop a robust classification model capable of accurately predicting the genre of a song based solely on its audio features.
+
+##  Dataset
+
+The dataset was downloaded from Kaggle in a CSV format.This dataset provides comprehensive information about Spotify tracks encompassing a diverse collection of 125 genres.
+
+```{r }
+data<-read.csv("train.csv")
+dim(data)
+```
+
+The dataset has already been cleaned and contains no missing values
+
+```{r }
+sum(is.na(data))
+```
+
+The dataset comprises multiple columns, each representing distinctive audio features associated with individual tracks.
+
+```{r }
+names<-colnames(data)
+names
+```
+
+The first 5 descriptive columns were removed as they are irrelevant for the objective of the project
+
+```{r }
+#removing unnamed..0,track_id,artists,album_name,track_name columns
+df<-data[,-c(1,2,3,4,5)]
+colnames(df)
+```
+
+###  Descrpition of the features
+
+1.  **popularity**: A score indicating how popular a track is on Spotify (ranging from 0 to 100).
+
+2.  **duration_ms**: The duration of a track in milliseconds.
+
+3.  **explicit:** Indicates whether a track contains explicit content (True or False). Explore Audio Features: This dataset includes various audio features associated with each track. Here are some notable ones:
+
+4.  **Danceability**: Danceability measures how suitable a track is for dancing, ranging from 0 to 1. Tracks with high danceability scores are more energetic and rhythmic, making them ideal for dancing.
+
+5.  **Energy**: Energy represents intensity and activity within a song on a scale from 0 to 1. Tracks with high energy tend to be more fast-paced and intense.
+
+6.  **Loudness**: Loudness indicates how loud or quiet an entire song is in decibels (dB). Positive values represent louder songs while negative values suggest quieter ones.
+
+7.  **Key**: Key refers to different musical keys assigned integers ranging from 0-11, with each number representing a different key. Knowing the key can provide insights into the mood and tone of a song.
+
+8.  **mode**: The tonal mode of the track, represented by an integer value (0 for minor, 1 for major).
+
+9.  **speechiness**: A score ranging from 0 to 1 that represents the presence of spoken words in a track.
+
+10. **acousticness**: A score ranging from 0 to 1 that represents the extent to which a track possesses an acoustic quality.
+
+11. **instrumentalness**: A score ranging from 0 to 1 that represents the likelihood of a track being instrumental.
+
+12. **liveness** A score ranging from 0 to 1 that represents the presence of an audience during the recording or performance of a track.
+
+13. **Valence**: Valence measures the musical positiveness conveyed by a track, ranging from 0 to 1. High valence values indicate more positive or happy tracks, while lower values suggest more negative or sad ones.
+
+14. **Tempo**: Tempo is the speed or pace of a song in beats per minute (BPM). It gives an idea about how fast or slow a track is.
+
+15. **time_signature**: The number of beats within each bar of the track.
+
+###  Response variable
+
+16. **track_genre**: The genre of the track. This will be the **response variable**.
+
+```{r }
+unique(df$track_genre)
+```
+
+Since there are too many different genres, only the 9 most important genres were selected for this analysis.
+
+```{r }
+genres<-c('classical','country','electronic','hip-hop','jazz','rock','pop','blues','reggae')
+
+#Filter the dataframe with selected genres
+df_filtered<-df[df$track_genre %in% genres,]
+
+y<-as.factor(df_filtered$track_genre)
+
+df_filtered$track_genre <- as.factor(df_filtered$track_genre)
+unique(y)
+```
+
+The dataset contains exactly 1000 tracks for each genre.
+
+```{r }
+table(y)
+```
+
+#  Exploratory Data Analysis
+
+In this section, we conduct exploratory data analysis (EDA) to gain insights into the distributional characteristics of various features in our dataset. EDA plays a crucial role in understanding the underlying patterns and relationships among different variables before proceeding with further analysis or modeling. We will view the relationship between the various features and the distribution of the various features based on the track genre, our response variable.
+
+##  Correlation between Features
+
+```{r }
+#considering only numeric features
+numeric_df <- df_filtered[, sapply(df_filtered, is.numeric)]
+cor_matrix<-cor(numeric_df)
+variable_names <- colnames(cor_matrix)
+heatmap.2(cor_matrix, 
+          trace = "none", # Turn off row/column dendrogram
+          col = colorRampPalette(c("black", "white", "red"))(20),
+          main = "Correlation Matrix",
+          dendrogram="none",
+          #xlab = "Variables", ylab = "Variables",
+          key = TRUE, # Add color key for the gradient
+          key.title = NA, # Remove the default key title
+          key.xlab = "Correlation", # Add x-axis label for the key
+          key.ylab = NULL, # Remove the default y-axis label for the key
+          Rowv = variable_names,  # Set row order
+          Colv = variable_names,  # Set column order
+          density.info = "none", # Turn off density plot
+          symkey = FALSE, # Do not plot a symmetric key
+          add.expr = {
+            # Add text annotations for correlation values
+            for (i in 1:nrow(cor_matrix)) {
+              for (j in 1:ncol(cor_matrix)) {
+                text(i ,15- j , format(cor_matrix[i, j], digits = 2),
+                     col = "black", cex = 0.8)
+              }
+            }
+          },
+          #width = 6, # Adjust width of the plot
+          #height = 6, # Adjust height of the plot
+          cexRow = 0.8, # Adjust text size for rows
+          cexCol = 0.8 # Adjust text size for columns
+          
+)
+```
+
+From the correlation matrix , we can notice that danceability, energy and loudness are significantly correlated negatively with acousticness, instrumentalness while they are positively correlated with each other. In particular there is a very high correlation of 0.82 between energy and loudness.
+
+```{r , echo=FALSE,include=FALSE}
+library(igraph)
+```
+
+From the following you can see the how above mentioned features that are partially correlated with each other while the rest of the features are basically conditionaly independent with repect to each other.
+
+```{r }
+
+
+S <- var(numeric_df)
+R <- -cov2cor(solve(S))
+
+thr <- 0.3
+
+G <- abs(R)>thr
+diag(G) <- 0
+
+#Gi <- as(G, "igraph")
+#plot(Gi)
+Gi <- graph_from_adjacency_matrix(as.matrix(G), mode = "undirected", weighted = NULL, diag = FALSE)
+plot(Gi,vertex.color="white")
+```
+
+##  Feature Distributions
+
+In this subsection we examine the distribution of individual features and their relationship with the target variable. For each feature, we generate histograms, density plots, and box plots to visualize the distribution across different classes.
+
+1. **Popularity**
+
+```{r ,echo=FALSE,fig.height=7}
+numeric_vars <- c("popularity", "duration_ms", "danceability", "energy", "key", "loudness",
+                   "speechiness", "acousticness", "instrumentalness", "liveness",
+                  "valence", "tempo")
+var<-"popularity"
+
+  bin_width <- diff(range(df_filtered[[var]])) / 50 
+  # Histogram
+  hist_plot <- ggplot(df_filtered, aes(x = !!sym(var))) +
+    geom_histogram(binwidth = bin_width, position = "identity", alpha = 0.7,show.legend=FALSE) +
+    labs(title = paste("Histogram of", var))
+  #print(hist_plot)
+  # Density distribution
+  density_plot <- ggplot(df_filtered, aes(x = !!sym(var), fill = track_genre)) +
+    geom_density(alpha = 0.7) +
+    labs(title = paste("Density Distribution of", var))+
+    theme(legend.position = "right")
+  #print(density_plot)
+  # Box plot
+  box_plot <- ggplot(df_filtered, aes(x = track_genre, y = !!sym(var), fill = track_genre)) +
+    geom_boxplot(show.legend=FALSE) +
+    labs(title = paste("Box Plot of", var))
+  #print(box_plot)
+  # Combine subplots for each variable
+  subplot = hist_plot / density_plot / box_plot+ 
+    plot_layout(guides = "collect",heights = c(2, 4,4))  
+  
+  # Display the combined subplots
+  print(subplot)
+
+```
+
+Classical,country, jazz, reggae and rock seem to generally be the least popular genres, with the majority of the rock tracks with a particularly low popularity score , but with a lot of outliers with a very high score. The most popular genres are pop,hip-hop and electronic. Hip-hop and pop have the highest spread in popularity values,with a a very high median value but left skewed distributions.
+
+2.  **Duration-ms**
+
+```{r ,echo=FALSE,fig.height=7}
+numeric_vars <- c("popularity", "duration_ms", "danceability", "energy", "key", "loudness",
+                   "speechiness", "acousticness", "instrumentalness", "liveness",
+                  "valence", "tempo")
+var<-"duration_ms"
+
+  bin_width <- diff(range(df_filtered[[var]])) / 50 
+  # Histogram
+  hist_plot <- ggplot(df_filtered, aes(x = !!sym(var))) +
+    geom_histogram(binwidth = bin_width, position = "identity", alpha = 0.7,show.legend=FALSE) +
+    labs(title = paste("Histogram of", var))
+  #print(hist_plot)
+  # Density distribution
+  density_plot <- ggplot(df_filtered, aes(x = !!sym(var), fill = track_genre)) +
+    geom_density(alpha = 0.7) +
+    labs(title = paste("Density Distribution of", var))+
+    theme(legend.position = "right")
+  #print(density_plot)
+  # Box plot
+  box_plot <- ggplot(df_filtered, aes(x = track_genre, y = !!sym(var), fill = track_genre)) +
+    geom_boxplot(show.legend=FALSE) +
+    labs(title = paste("Box Plot of", var))
+  #print(box_plot)
+  # Combine subplots for each variable
+  subplot = hist_plot / density_plot / box_plot+ 
+    plot_layout(guides = "collect",heights=c(2,4,4))  
+  
+  # Display the combined subplots
+  print(subplot)
+  #ggsave("combined_plot.png", plot = subplot, width = 10, height = 8)
+
+```
+
+All the genres have a relatively similar distribution except the classical genre which has the highest variance and lowest median value. The classical genre has the highest range of track duration with a relatively high concentration of short tracks but with a huge amount of outliers with extremely high track duration.
+
+3.  **Danceability**
+
+```{r ,echo=FALSE,fig.height=7}
+numeric_vars <- c("popularity", "duration_ms", "danceability", "energy", "key", "loudness",
+                   "speechiness", "acousticness", "instrumentalness", "liveness",
+                  "valence", "tempo")
+var<-"danceability"
+
+  bin_width <- diff(range(df_filtered[[var]])) / 50 
+  # Histogram
+  hist_plot <- ggplot(df_filtered, aes(x = !!sym(var))) +
+    geom_histogram(binwidth = bin_width, position = "identity", alpha = 0.7,show.legend=FALSE) +
+    labs(title = paste("Histogram of", var))
+  #print(hist_plot)
+  # Density distribution
+  density_plot <- ggplot(df_filtered, aes(x = !!sym(var), fill = track_genre)) +
+    geom_density(alpha = 0.7) +
+    labs(title = paste("Density Distribution of", var))+
+    theme(legend.position = "right")
+  #print(density_plot)
+  # Box plot
+  box_plot <- ggplot(df_filtered, aes(x = track_genre, y = !!sym(var), fill = track_genre)) +
+    geom_boxplot(show.legend=FALSE) +
+    labs(title = paste("Box Plot of", var))
+  #print(box_plot)
+  # Combine subplots for each variable
+  subplot = hist_plot / density_plot / box_plot+ 
+    plot_layout(guides = "collect", heights = c(1, 1.5,2))  
+  
+  # Display the combined subplots
+  print(subplot)
+
+
+```
+
+Hip-Hop and Reggae have the heighest dancebility scores, with Hip-Hop in general having a slightly higher concentration of tracks near the very maximum value of danceability. Classical and Jazz obviously have the lowest danceability score.
+
+4.  **Energy**
+
+```{r ,echo=FALSE,fig.height=7}
+numeric_vars <- c("popularity", "duration_ms", "danceability", "energy", "key", "loudness",
+                   "speechiness", "acousticness", "instrumentalness", "liveness",
+                  "valence", "tempo")
+var<-"energy"
+
+  bin_width <- diff(range(df_filtered[[var]])) / 50 
+  # Histogram
+  hist_plot <- ggplot(df_filtered, aes(x = !!sym(var))) +
+    geom_histogram(binwidth = bin_width, position = "identity", alpha = 0.7,show.legend=FALSE) +
+    labs(title = paste("Histogram of", var))
+  #print(hist_plot)
+  # Density distribution
+  density_plot <- ggplot(df_filtered, aes(x = !!sym(var), fill = track_genre)) +
+    geom_density(alpha = 0.7) +
+    labs(title = paste("Density Distribution of", var))+
+    theme(legend.position = "right")
+  #print(density_plot)
+  # Box plot
+  box_plot <- ggplot(df_filtered, aes(x = track_genre, y = !!sym(var), fill = track_genre)) +
+    geom_boxplot(show.legend=FALSE) +
+    labs(title = paste("Box Plot of", var))
+  #print(box_plot)
+  # Combine subplots for each variable
+  subplot = hist_plot / density_plot / box_plot+ 
+    plot_layout(guides = "collect", heights = c(1, 1.5,2))  
+  
+  # Display the combined subplots
+  print(subplot)
+
+
+```
+
+The distributions of the energy score are generally similar to danceability but with even lower scores for classical and jazz tracks. The main differences are that electronic tracks have a higher energy score than hip-hop and rock has a generally much higher energy score compared to danceability.
+
+6.  **Key**
+
+```{r ,echo=FALSE,fig.height=7}
+numeric_vars <- c("popularity", "duration_ms", "danceability", "energy", "key", "loudness",
+                   "speechiness", "acousticness", "instrumentalness", "liveness",
+                  "valence", "tempo")
+var<-"key"
+
+  bin_width <- diff(range(df_filtered[[var]])) / 50 
+  # Histogram
+  hist_plot <- ggplot(df_filtered, aes(x = !!sym(var))) +
+    geom_histogram(binwidth = bin_width, position = "identity", alpha = 0.7,show.legend=FALSE) +
+    labs(title = paste("Histogram of", var))
+  #print(hist_plot)
+  # Density distribution
+  density_plot <- ggplot(df_filtered, aes(x = !!sym(var), fill = track_genre)) +
+    geom_density(alpha = 0.7) +
+    labs(title = paste("Density Distribution of", var))+
+    theme(legend.position = "right")
+  #print(density_plot)
+  # Box plot
+  box_plot <- ggplot(df_filtered, aes(x = track_genre, y = !!sym(var), fill = track_genre)) +
+    geom_boxplot(show.legend=FALSE) +
+    labs(title = paste("Box Plot of", var))
+  #print(box_plot)
+  # Combine subplots for each variable
+  subplot = hist_plot / density_plot / box_plot+ 
+    plot_layout(guides = "collect", heights = c(1, 1.5,2))  
+  
+  # Display the combined subplots
+  print(subplot)
+
+
+```
+
+Visually the feature "Key" doesn't have a big effect on the differences between the genres.
+
+7.  **Loudness**
+
+```{r ,echo=FALSE,fig.height=7}
+numeric_vars <- c("popularity", "duration_ms", "danceability", "energy", "key", "loudness",
+                   "speechiness", "acousticness", "instrumentalness", "liveness",
+                  "valence", "tempo")
+var<-"loudness"
+
+  bin_width <- diff(range(df_filtered[[var]])) / 50 
+  # Histogram
+  hist_plot <- ggplot(df_filtered, aes(x = !!sym(var))) +
+    geom_histogram(binwidth = bin_width, position = "identity", alpha = 0.7,show.legend=FALSE) +
+    labs(title = paste("Histogram of", var))
+  #print(hist_plot)
+  # Density distribution
+  density_plot <- ggplot(df_filtered, aes(x = !!sym(var), fill = track_genre)) +
+    geom_density(alpha = 0.7) +
+    labs(title = paste("Density Distribution of", var))+
+    theme(legend.position = "right")
+  #print(density_plot)
+  # Box plot
+  box_plot <- ggplot(df_filtered, aes(x = track_genre, y = !!sym(var), fill = track_genre)) +
+    geom_boxplot(show.legend=FALSE) +
+    labs(title = paste("Box Plot of", var))
+  #print(box_plot)
+  # Combine subplots for each variable
+  subplot = hist_plot / density_plot / box_plot+ 
+    plot_layout(guides = "collect", heights = c(5, 5,5))  
+  
+  # Display the combined subplots
+  print(subplot)
+
+
+```
+
+Reggae and Hip-hop are generally the loudest, while jazz and classical are generally quieter.This feature has a 0.82 correlation with energy , so the similarity in distributions is expected.
+
+8.  **Speechiness**
+
+```{r ,echo=FALSE,fig.height=7}
+numeric_vars <- c("popularity", "duration_ms", "danceability", "energy", "key", "loudness",
+                   "speechiness", "acousticness", "instrumentalness", "liveness",
+                  "valence", "tempo")
+var<-"speechiness"
+
+  bin_width <- diff(range(df_filtered[[var]])) / 50 
+  # Histogram
+  hist_plot <- ggplot(df_filtered, aes(x = !!sym(var))) +
+    geom_histogram(binwidth = bin_width, position = "identity", alpha = 0.7,show.legend=FALSE) +
+    labs(title = paste("Histogram of", var))
+  #print(hist_plot)
+  # Density distribution
+  density_plot <- ggplot(df_filtered, aes(x = !!sym(var), fill = track_genre)) +
+    geom_density(alpha = 0.7) +
+    labs(title = paste("Density Distribution of", var))+
+    theme(legend.position = "right")
+  #print(density_plot)
+  # Box plot
+  box_plot <- ggplot(df_filtered, aes(x = track_genre, y = !!sym(var), fill = track_genre)) +
+    geom_boxplot(show.legend=FALSE) +
+    labs(title = paste("Box Plot of", var))
+  #print(box_plot)
+  # Combine subplots for each variable
+  subplot = hist_plot / density_plot / box_plot+ 
+    plot_layout(guides = "collect", heights = c(3, 5,5))  
+  
+  # Display the combined subplots
+  print(subplot)
+
+
+```
+
+All the genres have a majority of their tracks concentrated at a very low score, with country in particular having the lowest variance while Hip-hop has the highest median value and variance.
+
+9.  **Acousticness**
+
+```{r ,echo=FALSE,fig.height=7}
+numeric_vars <- c("popularity", "duration_ms", "danceability", "energy", "key", "loudness",
+                   "speechiness", "acousticness", "instrumentalness", "liveness",
+                  "valence", "tempo")
+var<-"acousticness"
+
+  bin_width <- diff(range(df_filtered[[var]])) / 50 
+  # Histogram
+  hist_plot <- ggplot(df_filtered, aes(x = !!sym(var))) +
+    geom_histogram(binwidth = bin_width, position = "identity", alpha = 0.7,show.legend=FALSE) +
+    labs(title = paste("Histogram of", var))
+  #print(hist_plot)
+  # Density distribution
+  density_plot <- ggplot(df_filtered, aes(x = !!sym(var), fill = track_genre)) +
+    geom_density(alpha = 0.7) +
+    labs(title = paste("Density Distribution of", var))+
+    theme(legend.position = "right")
+  #print(density_plot)
+  # Box plot
+  box_plot <- ggplot(df_filtered, aes(x = track_genre, y = !!sym(var), fill = track_genre)) +
+    geom_boxplot(show.legend=FALSE) +
+    labs(title = paste("Box Plot of", var))
+  #print(box_plot)
+  # Combine subplots for each variable
+  subplot = hist_plot / density_plot / box_plot+ 
+    plot_layout(guides = "collect", heights = c(1, 1.5,2))  
+  
+  # Display the combined subplots
+  print(subplot)
+
+
+```
+
+This feature has a high variance for all the genres with the exception of the classical genre which is highly concentrated close to the maximum value of 1. Elcetronic, hip-hop and reggae have in general the lowest acousticness score.
+
+10. **Instrumentalness**
+
+```{r ,echo=FALSE,fig.height=7}
+numeric_vars <- c("popularity", "duration_ms", "danceability", "energy", "key", "loudness",
+                   "speechiness", "acousticness", "instrumentalness", "liveness",
+                  "valence", "tempo")
+var<-"instrumentalness"
+
+  bin_width <- diff(range(df_filtered[[var]])) / 50 
+  # Histogram
+  hist_plot <- ggplot(df_filtered, aes(x = !!sym(var))) +
+    geom_histogram(binwidth = bin_width, position = "identity", alpha = 0.7,show.legend=FALSE) +
+    labs(title = paste("Histogram of", var))
+  #print(hist_plot)
+  # Density distribution
+  density_plot <- ggplot(df_filtered, aes(x = !!sym(var), fill = track_genre)) +
+    geom_density(alpha = 0.7) +
+    labs(title = paste("Density Distribution of", var))+
+    theme(legend.position = "right")
+  #print(density_plot)
+  # Box plot
+  box_plot <- ggplot(df_filtered, aes(x = track_genre, y = !!sym(var), fill = track_genre)) +
+    geom_boxplot(show.legend=FALSE) +
+    labs(title = paste("Box Plot of", var))
+  #print(box_plot)
+  # Combine subplots for each variable
+  subplot = hist_plot / density_plot / box_plot+ 
+    plot_layout(guides = "collect", heights = c(1, 1.5,2))  
+  
+  # Display the combined subplots
+  print(subplot)
+
+
+```
+
+Aside from classical and electronic, all the genres have an instrumentalness score close to 0. Classical is heavily left skewed distribution with a high variance while electronic has a very right skewed distribution with its median value close to 0 but a very high variance.
+
+11. **Liveness**
+
+```{r ,echo=FALSE,fig.height=7}
+numeric_vars <- c("popularity", "duration_ms", "danceability", "energy", "key", "loudness",
+                   "speechiness", "acousticness", "instrumentalness", "liveness",
+                  "valence", "tempo")
+var<-"liveness"
+
+  bin_width <- diff(range(df_filtered[[var]])) / 50 
+  # Histogram
+  hist_plot <- ggplot(df_filtered, aes(x = !!sym(var))) +
+    geom_histogram(binwidth = bin_width, position = "identity", alpha = 0.7,show.legend=FALSE) +
+    labs(title = paste("Histogram of", var))
+  #print(hist_plot)
+  # Density distribution
+  density_plot <- ggplot(df_filtered, aes(x = !!sym(var), fill = track_genre)) +
+    geom_density(alpha = 0.7) +
+    labs(title = paste("Density Distribution of", var))+
+    theme(legend.position = "right")
+  #print(density_plot)
+  # Box plot
+  box_plot <- ggplot(df_filtered, aes(x = track_genre, y = !!sym(var), fill = track_genre)) +
+    geom_boxplot(show.legend=FALSE) +
+    labs(title = paste("Box Plot of", var))
+  #print(box_plot)
+  # Combine subplots for each variable
+  subplot = hist_plot / density_plot / box_plot+ 
+    plot_layout(guides = "collect", heights = c(1, 1.5,2))  
+  
+  # Display the combined subplots
+  print(subplot)
+
+
+```
+
+Visually there doesn't seem to be much difference in the liveness distribution of all the genres.They all have a right skewed distribution with median around 0.12 with the exception of the blues genres which has a slightly higher median value than all the other genres. There a lot of outliers for each genre.
+
+12. **Valence**
+
+```{r ,echo=FALSE,fig.height=7}
+numeric_vars <- c("popularity", "duration_ms", "danceability", "energy", "key", "loudness",
+                   "speechiness", "acousticness", "instrumentalness", "liveness",
+                  "valence", "tempo")
+var<-"valence"
+
+  bin_width <- diff(range(df_filtered[[var]])) / 50 
+  # Histogram
+  hist_plot <- ggplot(df_filtered, aes(x = !!sym(var))) +
+    geom_histogram(binwidth = bin_width, position = "identity", alpha = 0.7,show.legend=FALSE) +
+    labs(title = paste("Histogram of", var))
+  #print(hist_plot)
+  # Density distribution
+  density_plot <- ggplot(df_filtered, aes(x = !!sym(var), fill = track_genre)) +
+    geom_density(alpha = 0.7) +
+    labs(title = paste("Density Distribution of", var))+
+    theme(legend.position = "right")
+  #print(density_plot)
+  # Box plot
+  box_plot <- ggplot(df_filtered, aes(x = track_genre, y = !!sym(var), fill = track_genre)) +
+    geom_boxplot(show.legend=FALSE) +
+    labs(title = paste("Box Plot of", var))
+  #print(box_plot)
+  # Combine subplots for each variable
+  subplot = hist_plot / density_plot / box_plot+ 
+    plot_layout(guides = "collect", heights = c(1, 1.5,2))  
+  
+  # Display the combined subplots
+  print(subplot)
+
+
+```
+
+Reggae and blues have the highest valence scores, while classical and electroncic have the lowest.This indicated that reggae and blues generally have a more positive vibe while classical and electronic are generally more negative.
+
+13. **Tempo**
+
+```{r ,echo=FALSE,fig.height=7}
+numeric_vars <- c("popularity", "duration_ms", "danceability", "energy", "key", "loudness",
+                   "speechiness", "acousticness", "instrumentalness", "liveness",
+                  "valence", "tempo")
+var<-"tempo"
+
+  bin_width <- diff(range(df_filtered[[var]])) / 50 
+  # Histogram
+  hist_plot <- ggplot(df_filtered, aes(x = !!sym(var))) +
+    geom_histogram(binwidth = bin_width, position = "identity", alpha = 0.7,show.legend=FALSE) +
+    labs(title = paste("Histogram of", var))
+  #print(hist_plot)
+  # Density distribution
+  density_plot <- ggplot(df_filtered, aes(x = !!sym(var), fill = track_genre)) +
+    geom_density(alpha = 0.7) +
+    labs(title = paste("Density Distribution of", var))+
+    theme(legend.position = "right")
+  #print(density_plot)
+  # Box plot
+  box_plot <- ggplot(df_filtered, aes(x = track_genre, y = !!sym(var), fill = track_genre)) +
+    geom_boxplot(show.legend=FALSE) +
+    labs(title = paste("Box Plot of", var))
+  #print(box_plot)
+  # Combine subplots for each variable
+  subplot = hist_plot / density_plot / box_plot+ 
+    plot_layout(guides = "collect", heights = c(1, 1.5,2))  
+  
+  # Display the combined subplots
+  print(subplot)
+
+
+```
+
+The genre distribution are multimodal and have peaks around distinct values.In particular Reggae and electronic have the most identifiable distributions.
+
+#  Models
+
+In this section, we will apply various tuned models trained on a training set for a multi class classification task evaluated on a separate test set. To create the training and test set, the dataset was divided with 80/20 ratio.Here we create a model matriX X and scale it to a normal distribution N(0,1) to reduce the effect of the scale of a feature on predictions.
+
+```{r}
+set.seed(1)
+X<-model.matrix(track_genre~.,data=df_filtered)[,-1]
+
+numeric_vars <- sapply(df_filtered[,-16], is.numeric)
+categorical_vars <- !numeric_vars
+
+
+# Scale numerical variables in the model matrix
+X_scaled<-X
+X_scaled[, numeric_vars] <- scale(X[, numeric_vars])
+
+
+train <- sample(1:nrow(X), 4*nrow(X)/5)
+test <- (-train)
+#X.train<-X[train,]
+#X.test<-X[test,]
+y.train<-y[train]
+y.test <- y[test]
+
+X_scaled.train<-X_scaled[train,]
+X_scaled.test<-X_scaled[test,]
+```
+
+## Multinomial Logistic regression
+
+In this subsection we will apply different variants of a Multinomial regression with feature selection or regularization. Multinomial logistic regression is a powerful technique for modeling relationships between multiple categorical outcome variables and predictor variables. The multinomial logistic regression model extends the binary logistic regression model to handle multiple classes. The conditional probability of observing class $k$ given predictor variables $\mathbf{x}$ is given by:
+
+$$
+P(Y = k | \mathbf{x}) = \frac{e^{\beta_{0k} + \beta_k^T \mathbf{x}}}{1 + \sum_{l=1}^{K-1} e^{\beta_{0l} + \beta_l^T \mathbf{x}}}
+$$
+
+where $K$ is the number of classes, $\beta_{0k}$ are the intercepts for each class, $\beta_k$ are the coefficient vectors for each class, and $\mathbf{x}$ is the vector of predictor variables.
+
+Next, we discuss the implementation details of multinomial logistic regression in R, leveraging popular libraries such as \texttt{glmnet} or \texttt{nnet}. In particular, we explore the \texttt{multinom()} function provided by the \texttt{nnet} package in R. The \texttt{multinom()} function fits multinomial logistic regression models using the maximum likelihood estimation method and can handle both nominal and ordinal response variables.
+
+###  Base Model
+
+```{r,message=FALSE,echo = T, results = 'hide'}
+multinom_model <- multinom(track_genre ~ ., data = df_filtered[train,])
+#summary(multinom_model)
+```
+
+```{r}
+predictions <- predict(multinom_model, newdata = df_filtered[test,], type = "class")
+confusion_matrix <- table(predictions, y.test)
+accuracy <- sum(diag(confusion_matrix)) / sum(confusion_matrix)
+print(paste("Accuracy:", accuracy))
+
+```
+
+We get and accuracy of around 50% relatively good improvement compared to the to the value of the 11.1% accuracy of a random guess.
+
+```{r}
+# Display results
+print("Confusion Matrix:")
+print(confusion_matrix)
+```
+
+Looking at the Confusion Matrix we and the overall precision values in the table below , we can notice that the classical genre is classified with a relatively high precision of 86.7% while the rest are all below 50% with the exception of electronic and jazz with 58.6% and 52.8% respectively. We can notice that The Blues genre is most confused by jazz, hip-hop is most confused by Reggae and rock is most confused by country.
+
+```{r,include=FALSE}
+metrics <- confusionMatrix(confusion_matrix)
+
+# Extract precision, recall, F1-score, and specificity for each class
+precision <- metrics$byClass[, "Precision"]
+recall <- metrics$byClass[, "Recall"]
+f1_score <- metrics$byClass[, "F1"]
+specificity <- 1 - metrics$byClass[, "Sensitivity"]
+#accuracy <- metrics$byClass[,"Accuracy"]
+#str(metrics)
+# Create a data frame with the metrics
+metrics_df <- data.frame(
+  #Class = rownames(metrics$byClass),
+  Precision = precision,
+  Recall = recall,
+  F1_Score = f1_score,
+  Specificity = specificity
+  #Accuracy = accuracy
+)
+
+
+```
+
+
+```{r}
+# Print or use the metrics_df data frame
+print(metrics_df)
+```
+
+###  Subset Selection
+
+In this subsection, we delve into subset selection methods for model comparison, specifically focusing on backward subset selection using AIC, forward subset selection using AIC, backward selection using BIC, and forward selection using BIC. Subset selection methods are a class of techniques used to identify the most informative subset of predictor variables for a given statistical model. These methods aim to strike a balance between model complexity and predictive performance, ultimately leading to models that are more interpretable and generalize better to unseen data. The Akaike Information Criterion (AIC) and Bayesian Information Criterion (BIC) are widely used model selection criteria that balance goodness of fit with model complexity. They are defined as follows:
+
+$$
+\text{AIC} = -2 \log(L) + 2k
+$$
+
+$$
+\text{BIC} = -2 \log(L) + k \log(n)
+$$
+
+where $L$ is the likelihood of the model, $k$ is the number of parameters in the model, and $n$ is the number of observations. The AIC and BIC penalize models with higher complexity, encouraging the selection of simpler models that adequately explain the data.
+
+```{r,include=FALSE}
+library(nnet)
+library(MASS)#library for step functions
+```
+
+-   **Backward selection with AIC**
+
+Backward subset selection is a stepwise approach that starts with the full model and iteratively removes predictors that contribute the least to the model's fit. In backward subset selection with AIC, predictors are sequentially removed until the AIC is minimized, indicating the best subset of predictors.
+
+```{r,message=FALSE,echo = T, results = 'hide'}
+model <- multinom(track_genre ~ ., data = df_filtered[train,])
+
+# Perform stepwise selection using step AIC function
+step_model <- step(model, direction = "backward")
+
+```
+
+```{r}
+step_model$anova
+```
+
+Only the key feature was removed. Testing the new model trained on the new model trained on a subset removing the key feature, the overall accuracy on a test set actually slightly decreased by around 1%.
+
+```{r}
+predictions <- predict(step_model, newdata = df_filtered[test,], type = "class")
+confusion_matrix <- table(predictions, y.test)
+accuracy <- sum(diag(confusion_matrix)) / sum(confusion_matrix)
+print(paste("Accuracy:", accuracy))
+```
+
+From the confusion Matrix and the table of metrics, we can see that the main genre negatively affected by removing the key feature is the Blues genre with a reduction in precision of nearly 4% and its increase in confusion with jazz.
+
+```{r}
+print("Confusion Matrix:")
+print(confusion_matrix)
+```
+
+```{r,include=FALSE}
+metrics <- confusionMatrix(confusion_matrix)
+
+# Extract precision, recall, F1-score, and specificity for each class
+precision <- metrics$byClass[, "Precision"]
+recall <- metrics$byClass[, "Recall"]
+f1_score <- metrics$byClass[, "F1"]
+specificity <- 1 - metrics$byClass[, "Sensitivity"]
+#accuracy <- metrics$byClass[,"Accuracy"]
+#str(metrics)
+# Create a data frame with the metrics
+metrics_df <- data.frame(
+  #Class = rownames(metrics$byClass),
+  Precision = precision,
+  Recall = recall,
+  F1_Score = f1_score,
+  Specificity = specificity
+  #Accuracy = accuracy
+)
+
+
+
+```
+
+```{r}
+# Print or use the metrics_df data frame
+print(metrics_df)
+```
+
+-   **Forward selection with AIC**
+
+Forward subset selection is another stepwise approach that begins with an empty model and iteratively adds predictors that most improve the model fit. Similar to backward selection, forward selection utilizes the AIC criterion to determine the optimal subset of predictors by adding variables until the AIC is minimized.
+
+```{r,message=FALSE,echo = T, results = 'hide'}
+output <- capture.output({
+#Forward feature selection(AIC)
+selected_features <- c()
+min_AIC <- Inf
+
+while (TRUE) {
+  remaining_features <- setdiff(colnames(df_filtered), c("track_genre", selected_features))
+  
+  if (length(remaining_features) == 0) {
+    break
+  }
+  
+  best_AIC <- Inf
+  best_feature <- NULL
+  
+  for (feature in remaining_features) {
+    current_model <- multinom(track_genre ~ ., data = df_filtered[train, c(selected_features, feature, "track_genre")])
+    current_AIC <- AIC(current_model)
+    
+    if (current_AIC < best_AIC) {
+      best_AIC <- current_AIC
+      best_feature <- feature
+    }
+  }
+  
+  if (best_AIC < min_AIC) {
+    min_AIC <- best_AIC
+    selected_features <- c(selected_features, best_feature)
+  } else {
+    break  # No improvement in AIC, stop the loop
+  }
+}
+
+
+})
+
+```
+
+The same subset was obtained with forward selection, only key was removed.
+
+```{r}
+print(selected_features)
+```
+
+-   **Backward selection with BIC**
+
+Backward subset selection with the Bayesian Information Criterion (BIC) follows a similar approach to AIC-based selection but utilizes the BIC criterion instead. BIC penalizes model complexity more severely than AIC, often resulting in more parsimonious models. In backward subset selection with BIC, predictors are eliminated iteratively until the BIC is minimized, leading to a model with optimal predictive performance.
+
+```{r,message=FALSE,echo = T, results = 'hide'}
+model <- multinom(track_genre ~ ., data = df_filtered[train,])
+
+# Perform stepwise selection using step function
+step_model <- step(model, direction = "backward",k=log(length(train)),trace=0)
+```
+
+```{r}
+step_model$anova
+```
+
+```{r}
+step_model$coefnames
+```
+
+The same subset was selected, with only the "key" feature removed.
+
+-   **Forward selection with BIC**
+
+Forward subset selection with BIC starts with an empty model and adds predictors based on the BIC criterion. Similar to the forward selection with AIC, this method iteratively adds predictors until the BIC is minimized, resulting in a subset of predictors that optimally balances model fit and complexity.
+
+```{r,message=FALSE,echo = T, results = 'hide'}
+output<-capture.output({
+selected_features <- c()
+min_BIC <- Inf
+
+while (TRUE) {
+  remaining_features <- setdiff(colnames(df_filtered), c("track_genre", selected_features))
+  
+  if (length(remaining_features) == 0) {
+    break
+  }
+  
+  best_BIC <- Inf
+  best_feature <- NULL
+  
+  for (feature in remaining_features) {
+    current_model <- multinom(track_genre ~ ., data = df_filtered[train, c(selected_features, feature, "track_genre")])
+    current_BIC <- BIC(current_model)
+    
+    if (current_BIC < best_BIC) {
+      best_BIC <- current_BIC
+      best_feature <- feature
+    }
+  }
+  
+  if (best_BIC < min_BIC) {
+    min_BIC <- best_BIC
+    selected_features <- c(selected_features, best_feature)
+  } else {
+    break  # No improvement in BIC, stop the loop
+  }
+}
+})
+```
+
+```{r}
+length(selected_features)
+```
+
+```{r}
+print(selected_features)
+```
+
+With forward subset selction with BIC , 3 features were removed: key,liveness and mode. We can get a preliminary idea of the relative unimportance of these 3 features in the multiclass classification
+
+```{r,message=FALSE,echo = T, results = 'hide'}
+multinom_model_bic <- multinom(track_genre ~ ., data = df_filtered[train,c(selected_features,"track_genre")])
+
+# Make Predictions
+predictions <- predict(multinom_model_bic, newdata = df_filtered[test,c(selected_features,"track_genre")], type = "class")
+
+# Evaluate the Model
+confusion_matrix <- table(predictions, y.test)
+accuracy <- sum(diag(confusion_matrix)) / sum(confusion_matrix)
+
+```
+
+```{r}
+print(paste("Accuracy:", accuracy))
+```
+
+The accuracy on the model applied on the test set is slightly better than the previous subset selection of only removing key,but is still slighlty less by an insignificant 0.5% compared to the full model.
+
+```{r}
+print("Confusion Matrix:")
+print(confusion_matrix)
+```
+
+```{r,include=FALSE}
+metrics <- confusionMatrix(confusion_matrix)
+
+# Extract precision, recall, F1-score, and specificity for each class
+precision <- metrics$byClass[, "Precision"]
+recall <- metrics$byClass[, "Recall"]
+f1_score <- metrics$byClass[, "F1"]
+specificity <- 1 - metrics$byClass[, "Sensitivity"]
+#accuracy <- metrics$byClass[,"Accuracy"]
+#str(metrics)
+# Create a data frame with the metrics
+metrics_df <- data.frame(
+  #Class = rownames(metrics$byClass),
+  Precision = precision,
+  Recall = recall,
+  F1_Score = f1_score,
+  Specificity = specificity
+  #Accuracy = accuracy
+)
+
+
+```
+
+```{r}
+# Print or use the metrics_df data frame
+print(metrics_df)
+```
+
+
+Overall by rounding the accuracies of all 3 models seen till now, no difference was found in accuracy,while it looks like mode,key and liveness features have an insignificant effect on the multiclass classification.
+
+###  Ridge Regularization
+
+Ridge regression is a type of linear regression that introduces regularization to mitigate multicollinearity and reduce the variance of the parameter estimates. It adds a penalty term to the least squares objective function, constraining the magnitude of the coefficient estimates. In this subsection, we apply ridge regularization using the glmnet package in R, setting the tuning parameter $\lambda$ to control the strength of regularization.
+
+Ridge regression minimizes the following objective function:
+
+$$
+\text{minimize} \left( ||\mathbf{y} - \mathbf{X}\beta||^2_2 + \lambda ||\beta||^2_2 \right)
+$$
+
+where $||\mathbf{y} - \mathbf{X}\beta||^2_2$ is the residual sum of squares, $||\beta||^2_2$ is the L2-norm penalty term, and $\lambda$ is the regularization parameter. The L2-norm penalty term shrinks the coefficient estimates towards zero, reducing their variance and mitigating overfitting.
+
+The glmnet package provides efficient algorithms for fitting generalized linear models with elastic-net regularization, which combines ridge (L2) and lasso (L1) penalties. However, by setting the parameter alpha to 0, we exclusively apply ridge regularization in our model.
+
+Through ridge regularization, we aim to stabilize the parameter estimates and improve the generalization performance of our model. We evaluate the effectiveness of ridge regularization by tuning the regularization parameter $\lambda$ by cross-validation. By incorporating ridge regularization into our modeling pipeline, we strive to strike a balance between model complexity and predictive accuracy.
+
+```{r}
+fit_ridge<-glmnet(X_scaled[train,],y[train],family="multinomial",alpha=0)
+#plot(fit_ridge)
+```
+
+```{r}
+lambda_interval<-10^seq(2,-8,length=100)
+cvfit_ridge<-cv.glmnet(X_scaled[train,],y[train],family="multinomial",alpha=0,lambda=lambda_interval)
+plot(cvfit_ridge)
+```
+
+```{r}
+#No Regularization
+pred <- predict(fit_ridge, s = 0, newx = X_scaled[test, ],
+                      exact = TRUE, type="class",x = X_scaled[train, ], y = y[train])
+pred_accuracy<-mean(pred==y.test)
+pred_accuracy
+```
+
+```{r}
+bestlam <- cvfit_ridge$lambda.min
+bestlam
+```
+
+```{r}
+ridge_pred=predict(cvfit_ridge,newx=X_scaled[test,],type="class", s="lambda.min")
+ridge_pred_accuracy<-mean(ridge_pred==y.test)
+ridge_pred_accuracy
+```
+
+```{r}
+conf_matrix <- table(Actual = y.test, Predicted = ridge_pred)
+print(conf_matrix)
+```
+
+```{r,include=FALSE}
+metrics <- confusionMatrix(conf_matrix)
+
+# Extract precision, recall, F1-score, and specificity for each class
+precision <- metrics$byClass[, "Precision"]
+recall <- metrics$byClass[, "Recall"]
+f1_score <- metrics$byClass[, "F1"]
+specificity <- 1 - metrics$byClass[, "Sensitivity"]
+
+# Create a data frame with the metrics
+metrics_df <- data.frame(
+  #Class = rownames(metrics$byClass),
+  Precision = precision,
+  Recall = recall,
+  F1_Score = f1_score,
+  Specificity = specificity
+)
+
+
+```
+
+```{r}
+# Print or use the metrics_df data frame
+print(metrics_df)
+```
+
+###  Lasso Regularization
+
+Lasso (Least Absolute Shrinkage and Selection Operator) regression is another form of linear regression that introduces regularization to select a subset of relevant predictors and shrink the coefficients of less important predictors to zero. This technique helps in building parsimonious models and handling multicollinearity.
+
+Lasso regression minimizes the following objective function:
+
+$$
+\text{minimize} \left( ||\mathbf{y} - \mathbf{X}\beta||^2_2 + \lambda ||\beta||_1 \right)
+$$
+
+where $||\mathbf{y} - \mathbf{X}\beta||^2_2$ is the residual sum of squares, $||\beta||_1$ is the L1-norm penalty term, and $\lambda$ is the regularization parameter.
+
+In this subsection, we apply Lasso regularization using the glmnet package in R. By setting the parameter alpha to 1, we exclusively apply Lasso regularization in our model. The L1-norm penalty encourages sparsity in the coefficient estimates, effectively performing variable selection by driving some coefficients to zero.
+
+The tuning parameter $\lambda$ controls the strength of regularization and the degree of shrinkage applied to the coefficient estimates. Through cross-validation we select the optimal value of $\lambda$ that balances model complexity and predictive performance.
+
+We evaluate the effectiveness of Lasso regularization by examining the resulting coefficient estimates, identifying significant predictors, and assessing the model's performance on validation data. Through this approach, we strive to build robust and parsimonious models that capture the underlying patterns in the data while minimizing overfitting.
+
+```{r}
+fit_lasso<-glmnet(X_scaled[train,],y[train],family="multinomial",alpha=1)
+custom_lambda_values <- 10^seq(10, -4, length = 20)  # Customize the range and number of lambda values
+
+cvfit_lasso <- cv.glmnet(X_scaled[train,], y[train], family = "multinomial", alpha = 1)
+plot(cvfit_lasso)
+
+```
+
+```{r}
+bestlam.1se <- cvfit_lasso$lambda.1se
+bestlam.1se
+```
+
+```{r}
+lasso_coefficients<-coef(fit_lasso,s=bestlam.1se)
+non_zero_counts <- sapply(lasso_coefficients, function(mat) sum(nnzero(mat)))
+
+# Print the non-zero counts
+print(non_zero_counts)
+```
+
+```{r}
+lasso_1se_pred=predict(cvfit_lasso,newx=X_scaled[test,],type="class", s="lambda.1se")
+lasso_1se_pred_accuracy<-mean(lasso_1se_pred==y.test)
+lasso_1se_pred_accuracy
+```
+
+```{r}
+conf_matrix <- table(Actual = y.test, Predicted = lasso_1se_pred)
+print(conf_matrix)
+```
+
+
+
+```{r,include=FALSE}
+
+
+
+metrics <- confusionMatrix(conf_matrix)
+
+# Extract precision, recall, F1-score, and specificity for each class
+precision <- metrics$byClass[, "Precision"]
+recall <- metrics$byClass[, "Recall"]
+f1_score <- metrics$byClass[, "F1"]
+specificity <- 1 - metrics$byClass[, "Sensitivity"]
+
+# Create a data frame with the metrics
+metrics_df <- data.frame(
+  Class = rownames(metrics$byClass),
+  Precision = precision,
+  Recall = recall,
+  F1_Score = f1_score,
+  Specificity = specificity
+)
+
+
+
+```
+
+```{r}
+# Print or use the metrics_df data frame
+print(metrics_df)
+```
+
+
+
+
+####  Lasso Coefficients
+
+In this subsection, we employ a bootstrap approach to assess the stability and variability of Lasso coefficients across different samples. Bootstrap resampling involves randomly sampling the dataset with replacement to generate multiple bootstrap samples. We repeat this process for a specified number of iterations, 1000 bootstraps in this case, to obtain a distribution of parameter estimates.
+
+We apply the Lasso regression using the `glmnet` package in R to each bootstrap sample and extract the coefficients for each predictor variable. By aggregating the coefficient estimates across all bootstrap samples, we obtain insights into the robustness and significance of predictor variables in the Lasso model.
+
+To visualize the distribution of Lasso coefficients for each class, we create box plots where the y-axis represents the coefficient values and the x-axis represents the predictor variables. Each box plot corresponds to a class, providing insights into the magnitude and variability of coefficients across different classes.
+
+Through this analysis, we aim to identify important predictors that consistently contribute to the classification of each class while accounting for the variability introduced by the bootstrap resampling process. Box plots serve as effective visualizations to compare coefficient distributions and detect potential outliers or influential predictors.
+
+```{r,cache=TRUE}
+library(doParallel)
+library(foreach)
+num_cores <- detectCores()
+cl <- makeCluster(num_cores)
+registerDoParallel(cl)
+
+# Define the number of bootstraps
+num_bootstraps <- 1000
+
+# Define the function to get coefficients from bootstrapped samples
+get_coefs <- function( indices) {
+  #coef(model, s = cv.glmnet(X_scaled.train[indices, ], y.train[indices], family = "multinomial", alpha = 1)$lambda.1se)
+  library(glmnet)
+  model <- glmnet(
+    x = X_scaled.train[indices, ],
+    y = y.train[indices],
+    family = "multinomial",
+    alpha=1,
+    parallel = TRUE
+  )
+  
+  # Extract and return the coefficients as a matrix
+  #return(as.matrix(coef(model,s=bestlam.1se)))
+  coefs_list <- coef(model, s = bestlam.1se)
+  
+  # Convert the list of coefficient vectors to a list of matrices
+  coefs_matrices <- lapply(coefs_list, as.matrix)
+  
+  return(coefs_matrices)
+  }
+
+# Bootstrap procedure in parallel
+boot_coefs <- foreach(i = 1:num_bootstraps, .combine = "rbind") %dopar% {
+  set.seed(i)  # Set a seed for reproducibility
+  indices <- sample(1:nrow(X_scaled.train), nrow(X_scaled.train), replace = TRUE)
+  get_coefs( indices)
+}
+
+# Stop the parallel backend
+stopCluster(cl)
+```
+
+1.  Blues
+
+```{r}
+#par(mfrow = c(3,3))
+i<-1
+#for (i in (1:ncol(boot_coefs))) {
+  class_coefs <- boot_coefs[,i]
+  class_coefs_c<-do.call(cbind,class_coefs)
+  boxplot(t(class_coefs_c), main = colnames(boot_coefs)[i],
+          col = "lightblue",
+          names = colnames(class_coefs),xaxt="n")
+  abline(h=0,col="red",lty=2)
+  axis(1, at = seq_along(rownames(class_coefs_c)), labels = rownames(class_coefs_c), las = 2)
+#}
+#par(mfrow=c(1,1))
+```
+
+2.  Classical
+
+```{r,echo=FALSE}
+#par(mfrow = c(3,3))
+i<-2
+#for (i in (1:ncol(boot_coefs))) {
+  class_coefs <- boot_coefs[,i]
+  class_coefs_c<-do.call(cbind,class_coefs)
+  boxplot(t(class_coefs_c), main = colnames(boot_coefs)[i],
+          col = "lightblue",
+          names = colnames(class_coefs),xaxt="n")
+  abline(h=0,col="red",lty=2)
+  axis(1, at = seq_along(rownames(class_coefs_c)), labels = rownames(class_coefs_c), las = 2)
+#}
+#par(mfrow=c(1,1))
+```
+
+3.  Country
+
+```{r,echo=FALSE}
+#par(mfrow = c(3,3))
+i<-3
+#for (i in (1:ncol(boot_coefs))) {
+  class_coefs <- boot_coefs[,i]
+  class_coefs_c<-do.call(cbind,class_coefs)
+  boxplot(t(class_coefs_c), main = colnames(boot_coefs)[i],
+          col = "lightblue",
+          names = colnames(class_coefs),xaxt="n")
+  abline(h=0,col="red",lty=2)
+  axis(1, at = seq_along(rownames(class_coefs_c)), labels = rownames(class_coefs_c), las = 2)
+#}
+#par(mfrow=c(1,1))
+```
+
+4.  Electronic
+
+```{r,echo=FALSE}
+#par(mfrow = c(3,3))
+i<-4
+#for (i in (1:ncol(boot_coefs))) {
+  class_coefs <- boot_coefs[,i]
+  class_coefs_c<-do.call(cbind,class_coefs)
+  boxplot(t(class_coefs_c), main = colnames(boot_coefs)[i],
+          col = "lightblue",
+          names = colnames(class_coefs),xaxt="n")
+  abline(h=0,col="red",lty=2)
+  axis(1, at = seq_along(rownames(class_coefs_c)), labels = rownames(class_coefs_c), las = 2)
+#}
+#par(mfrow=c(1,1))
+```
+
+5.  Hip-Hop
+
+```{r,echo=FALSE}
+#par(mfrow = c(3,3))
+i<-5
+#for (i in (1:ncol(boot_coefs))) {
+  class_coefs <- boot_coefs[,i]
+  class_coefs_c<-do.call(cbind,class_coefs)
+  boxplot(t(class_coefs_c), main = colnames(boot_coefs)[i],
+          col = "lightblue",
+          names = colnames(class_coefs),xaxt="n")
+  abline(h=0,col="red",lty=2)
+  axis(1, at = seq_along(rownames(class_coefs_c)), labels = rownames(class_coefs_c), las = 2)
+#}
+#par(mfrow=c(1,1))
+```
+
+6.  Jazz
+
+```{r,echo=FALSE}
+#par(mfrow = c(3,3))
+i<-6
+#for (i in (1:ncol(boot_coefs))) {
+  class_coefs <- boot_coefs[,i]
+  class_coefs_c<-do.call(cbind,class_coefs)
+  boxplot(t(class_coefs_c), main = colnames(boot_coefs)[i],
+          col = "lightblue",
+          names = colnames(class_coefs),xaxt="n")
+  abline(h=0,col="red",lty=2)
+  axis(1, at = seq_along(rownames(class_coefs_c)), labels = rownames(class_coefs_c), las = 2)
+#}
+#par(mfrow=c(1,1))
+```
+
+7.  Pop
+
+```{r,echo=FALSE}
+#par(mfrow = c(3,3))
+i<-7
+#for (i in (1:ncol(boot_coefs))) {
+  class_coefs <- boot_coefs[,i]
+  class_coefs_c<-do.call(cbind,class_coefs)
+  boxplot(t(class_coefs_c), main = colnames(boot_coefs)[i],
+          col = "lightblue",
+          names = colnames(class_coefs),xaxt="n")
+  abline(h=0,col="red",lty=2)
+  axis(1, at = seq_along(rownames(class_coefs_c)), labels = rownames(class_coefs_c), las = 2)
+#}
+#par(mfrow=c(1,1))
+```
+
+8.  Reggae
+
+```{r,echo=FALSE}
+#par(mfrow = c(3,3))
+i<-8
+#for (i in (1:ncol(boot_coefs))) {
+  class_coefs <- boot_coefs[,i]
+  class_coefs_c<-do.call(cbind,class_coefs)
+  boxplot(t(class_coefs_c), main = colnames(boot_coefs)[i],
+          col = "lightblue",
+          names = colnames(class_coefs),xaxt="n")
+  abline(h=0,col="red",lty=2)
+  axis(1, at = seq_along(rownames(class_coefs_c)), labels = rownames(class_coefs_c), las = 2)
+#}
+#par(mfrow=c(1,1))
+```
+
+9.  Rock
+
+```{r,echo=FALSE}
+#par(mfrow = c(3,3))
+i<-9
+#for (i in (1:ncol(boot_coefs))) {
+  class_coefs <- boot_coefs[,i]
+  class_coefs_c<-do.call(cbind,class_coefs)
+  boxplot(t(class_coefs_c), main = colnames(boot_coefs)[i],
+          col = "lightblue",
+          names = colnames(class_coefs),xaxt="n")
+  abline(h=0,col="red",lty=2)
+  axis(1, at = seq_along(rownames(class_coefs_c)), labels = rownames(class_coefs_c), las = 2)
+#}
+#par(mfrow=c(1,1))
+```
+
+
+
+###  Elastic Net
+
+Elastic Net regularization is a hybrid of ridge and Lasso regularization techniques, combining the strengths of both methods to handle multicollinearity, perform variable selection, and shrink coefficient estimates. Elastic Net introduces two tuning parameters, $\alpha$ and $\lambda$, controlling the balance between the L1-norm and L2-norm penalties.
+
+The objective function for Elastic Net regularization is defined as:
+
+$$
+\text{minimize} \left( ||\mathbf{y} - \mathbf{X}\beta||^2_2 + \lambda \left( \alpha ||\beta||_1 + (1 - \alpha) ||\beta||^2_2 \right) \right)
+$$
+
+where $||\mathbf{y} - \mathbf{X}\beta||^2_2$ is the residual sum of squares, $||\beta||_1$ is the L1-norm penalty term, $||\beta||^2_2$ is the L2-norm penalty term, $\lambda$ is the regularization parameter, and $\alpha$ controls the mixing ratio between L1 and L2 penalties.
+
+In this subsection, we apply Elastic Net regularization using the glmnet package in R. By setting $\alpha$ to a value between 0 and 1, we adjust the balance between Lasso and ridge penalties. A value of $\alpha = 1$ corresponds to pure Lasso regularization, while $\alpha = 0$ corresponds to pure ridge regularization.
+
+Through cross-validation or other validation techniques, we select the optimal values of $\alpha$ and $\lambda$ that balance model complexity and predictive performance. Elastic Net regularization is particularly useful when dealing with high-dimensional data and highly correlated predictor variables. Through this approach, we strive to harness the advantages of both ridge and Lasso regularization techniques.
+
+```{r}
+set.seed(1)
+# Initialize empty lists
+alpha_list <- numeric()
+error_min_list <- numeric()
+error_1se_list <- numeric()
+lambda_min_list <- numeric()
+lambda_1se_list <- numeric()
+
+#custom_lambda_sequence <- 10^seq(1, -6, length = 100)
+for (a in seq(0, 1, by = 0.1)) {
+  
+  cvfit_elastic_net <- cv.glmnet(X_scaled[train,],y[train],family="multinomial", alpha = a)#,lambda=custom_lambda_sequence)
+  #plot(cvfit_elastic_net)
+  #title(main = bquote(alpha == .(a)))
+  # Extract alpha, lambda.min, lambda.1se, and cross-validated errors
+  alpha_value <- cvfit_elastic_net$glmnet.fit$alpha
+  lambda_min <- cvfit_elastic_net$lambda.min
+  lambda_1se <- cvfit_elastic_net$lambda.1se
+  error_min <- cvfit_elastic_net$cvm[cvfit_elastic_net$lambda == lambda_min]
+  error_1se <- cvfit_elastic_net$cvm[cvfit_elastic_net$lambda == lambda_1se]
+  
+  # Append values to lists
+  alpha_list <- c(alpha_list, a)
+  error_min_list <- c(error_min_list, error_min)
+  error_1se_list <- c(error_1se_list, error_1se)
+  lambda_min_list <- c(lambda_min_list, lambda_min)
+  lambda_1se_list <- c(lambda_1se_list, lambda_1se)
+}
+
+results_df <- data.frame(
+  alpha = seq(0, 1, by = 0.1),
+  error_min = error_min_list,
+  error_1se = error_1se_list,
+  lambda_min = lambda_min_list,
+  lambda_1se = lambda_1se_list
+)
+
+print(results_df)
+```
+
+```{r,echo=FALSE}
+plot(results_df$alpha, results_df$error_min,ylim = c(min(results_df$error_min)-0.2, max(results_df$error_1se) + 0.1),
+     xlab = "Alpha", ylab = "Minimum deviance", main = "Min binomial deviance vs. Alpha",
+     pch = 16, col = "red", cex = 1.5)
+
+# Add error bars (standard deviation)
+arrows(results_df$alpha, results_df$error_min - (results_df$error_1se-results_df$error_min), results_df$alpha, results_df$error_1se,
+       angle = 90, code = 3, length = 0.05, col = "black")
+
+# Optionally, add points to highlight individual data points
+points(results_df$alpha[which.min(results_df$error_min)], results_df$error_min[which.min(results_df$error_min)], pch = 16, col = "blue", cex = 1.5)
+
+```
+
+```{r}
+alpha_chosen<-results_df$alpha[which.min(results_df$error_min)]
+
+best_lam_elastic_net<-results_df$lambda_1se[which.min(results_df$error_min)]
+
+best_elastic_net<-glmnet(X_scaled[train,],y[train],family="multinomial",alpha=alpha_chosen)
+
+```
+
+```{r}
+elastic_net_pred<-predict(best_elastic_net,newx=X_scaled.test,type="class",s=best_lam_elastic_net)
+elastic_net_pred_accuracy<-mean(elastic_net_pred==y.test)
+elastic_net_pred_accuracy
+```
+
+```{r}
+conf_matrix <- table(Actual = y.test, Predicted = elastic_net_pred)
+print(conf_matrix)
+```
+
+```{r,include=FALSE}
+metrics <- confusionMatrix(conf_matrix)
+
+# Extract precision, recall, F1-score, and specificity for each class
+precision <- metrics$byClass[, "Precision"]
+recall <- metrics$byClass[, "Recall"]
+f1_score <- metrics$byClass[, "F1"]
+specificity <- 1 - metrics$byClass[, "Sensitivity"]
+#accuracy <- metrics$overall["Accuracy"]
+
+# Create a data frame with the metrics
+metrics_df <- data.frame(
+  #Class = rownames(metrics$byClass),
+  Precision = precision,
+  Recall = recall,
+  F1_Score = f1_score,
+  Specificity = specificity
+  #Accuracy = accuracy
+)
+
+
+
+```
+
+```{r}
+# Print or use the metrics_df data frame
+print(metrics_df)
+```
+
+
+##  K-Nearest Neighbours
+
+K-Nearest Neighbors (KNN) is a non-parametric classification algorithm used for both classification and regression tasks. In KNN, the class of an observation is determined by the majority class among its K nearest neighbors in the feature space. KNN is particularly useful when dealing with non-linear relationships and high-dimensional data, making it a versatile choice for various classification tasks.
+
+In this section, we apply KNN using the `knn()` function from the "class" package in R. We use the optimal value of K selected through cross-validation to build the final KNN model. The `knn()` function assigns the class label of the majority of the K nearest neighbors to each observation in the test dataset.
+
+To choose the optimal value of K in KNN, we employ cross-validation using the `trainControl()` function from the caret package.
+
+```{r,include=FALSE}
+library(class)
+library(caret)
+```
+```{r,include=FALSE}
+unregister_dopar <- function() {
+  env <- foreach:::.foreachGlobals
+  rm(list=ls(name=env), pos=env)
+}
+```
+
+
+
+```{r,eval=FALSE}
+
+
+
+data.train <- data.frame(X_scaled.train, y.train)
+
+# Define the training control with 10-fold cross-validation
+ctrl <- trainControl(method = "cv", number = 10)
+
+# Specify the tuning grid for k (e.g., values from 1 to 10)
+grid <- expand.grid(k = 1:10)
+
+# Train the KNN model with cross-validation
+set.seed(123)  # Set a seed for reproducibility
+knn_model <- train(y.train ~ ., data = data.train, method = "knn", trControl = ctrl, tuneGrid = grid)
+
+
+
+```
+```{r,include=FALSE}
+load("knn_model.RData")
+```
+
+
+
+The optimal K found from cross-validation is K=1
+
+```{r}
+optimal_k <- knn_model$bestTune$k
+knn_model <- knn(train = X_scaled[train,], test = X_scaled[test,], cl = df_filtered[train,16], k = optimal_k)
+
+# Evaluate the model
+conf_matrix <- table(Actual = y.test, Predicted = knn_model)
+print(conf_matrix)
+```
+
+```{r}
+Accuracy<-mean(knn_model==y.test)
+Accuracy
+```
+
+```{r,include=FALSE}
+metrics <- confusionMatrix(conf_matrix)
+
+# Extract precision, recall, F1-score, and specificity for each class
+precision <- metrics$byClass[, "Precision"]
+recall <- metrics$byClass[, "Recall"]
+f1_score <- metrics$byClass[, "F1"]
+specificity <- 1 - metrics$byClass[, "Sensitivity"]
+#accuracy <- metrics$byClass[,"Accuracy"]
+#str(metrics)
+# Create a data frame with the metrics
+metrics_df <- data.frame(
+  #Class = rownames(metrics$byClass),
+  Precision = precision,
+  Recall = recall,
+  F1_Score = f1_score,
+  Specificity = specificity
+  #Accuracy = accuracy
+)
+
+
+```
+
+
+```{r}
+# Print or use the metrics_df data frame
+print(metrics_df)
+```
+
+##  Random Forest
+
+Random Forest is a powerful ensemble learning method that constructs a multitude of decision trees during training and outputs the mode of the classes (classification) or mean prediction (regression) of the individual trees. It's known for its robustness, scalability, and ability to handle high-dimensional data with complex interactions.
+
+To optimize the performance of the Random Forest model and prevent overfitting, we utilize cross-validation techniques. We split the dataset into training and validation sets using the `trainControl()` function from the caret package. By varying parameters such as the number of trees and the number of variables randomly sampled as candidates at each split, we tune the model for optimal performance.
+
+In this section, we apply Random Forest using the `randomForest()` function from the "randomForest" package in R. We specify the number of trees in the forest and other hyperparameters based on cross-validation results. The `randomForest()` function constructs the ensemble of decision trees and aggregates their predictions to make final classifications or predictions.
+
+We evaluate the performance of the Random Forest model using appropriate evaluation metrics such as accuracy, precision, recall, and F1-score.
+
+```{r,include=FALSE}
+library(randomForest)
+
+library(caret)
+
+```
+
+```{r,eval=FALSE}
+#library(randomForest)
+
+#library(caret)
+
+# Create a training control with cross-validation
+ctrl <- trainControl(method = "cv", number = 10, classProbs = TRUE)
+levels(df_filtered$track_genre) <- make.names(levels(df_filtered$track_genre))
+# Train a Random Forest model using cross-validation
+rf_model <- train(track_genre ~ ., data = df_filtered[train,],
+                  method = "rf",
+                  trControl = ctrl)
+
+
+```
+From cross-validation we set mtry=8. "mtry" refers to the number of variables randomly sampled as candidates at each split when building each tree in the forest.
+
+```{r,include=FALSE}
+load("rf_model.RData")
+```
+
+```{r}
+predictions <- predict(rf_model, newdata = df_filtered[test,])
+
+# Evaluate the model
+confusion_matrix <- table(predictions, y.test)
+confusion_matrix
+```
+
+```{r}
+accuracy <- sum(diag(confusion_matrix)) / sum(confusion_matrix)
+print(paste("Accuracy:", accuracy))
+```
+
+```{r,include=FALSE}
+rownames(confusion_matrix)[5]<-"hip-hop"
+metrics <- confusionMatrix(confusion_matrix)
+
+# Extract precision, recall, F1-score, and specificity for each class
+precision <- metrics$byClass[, "Precision"]
+recall <- metrics$byClass[, "Recall"]
+f1_score <- metrics$byClass[, "F1"]
+specificity <- 1 - metrics$byClass[, "Sensitivity"]
+#accuracy <- metrics$byClass[,"Accuracy"]
+#str(metrics)
+# Create a data frame with the metrics
+metrics_df <- data.frame(
+  #Class = rownames(metrics$byClass),
+  Precision = precision,
+  Recall = recall,
+  F1_Score = f1_score,
+  Specificity = specificity
+  #Accuracy = accuracy
+)
+
+
+```
+
+```{r}
+# Print or use the metrics_df data frame
+print(metrics_df)
+```
+
+
+##  Gradient Boosting
+
+Gradient Boosting is a powerful machine learning technique that builds a predictive model in the form of an ensemble of weak prediction models of decision trees. It sequentially trains new models to correct errors made by existing models, with each new model focusing on the residuals of the previous model.Gradient Boosting is well-suited for regression and classification tasks, especially when dealing with complex relationships and high-dimensional datasets
+
+To optimize the performance of the Gradient Boosting model and prevent overfitting, we employ cross-validation techniques. We use the `trainControl()` function from the "caret" package to split the dataset into training and validation sets. By varying parameters such as the learning rate, tree depth, and the number of boosting iterations, we tune the model for optimal performance.
+
+In this section, we apply Gradient Boosting using the `gbm()` function from the "gbm" package in R. The `gbm()` function iteratively fits a sequence of regression trees to the residuals of the previous model. We evaluate the performance of the Gradient Boosting model using accuracy. Additionally, we analyze the importance of predictor variables using a relative influence measure.
+
+```{r}
+library(caret)
+library(gbm)
+```
+
+```{r, include=FALSE}
+df_filtered$explicit <- factor(df_filtered$explicit, levels = c("False", "True"))
+```
+
+```{r,eval=FALSE}
+
+
+# Set up parameter grid for tuning (without subsample and colsample_bytree)
+param_grid <- expand.grid(
+  n.trees = c(50, 100, 500,1000),  # Adjust the values as needed
+  interaction.depth = c(1, 2, 4, 6,8,10),
+  shrinkage = c(0.01, 0.1, 0.3),
+  n.minobsinnode = 10
+)
+param_grid <- expand.grid(
+  n.trees = c(1000,1500,2000,5000),  # Adjust the values as needed
+  interaction.depth = c(1, 5,10,15,20),
+  shrinkage = c(0.001,0.01, 0.1),
+  n.minobsinnode = 10
+)
+```
+
+```{r,eval=FALSE}
+results <- list()
+
+# Perform grid search over hyperparameter space
+for (i in 1:nrow(param_grid)) {
+  # Define parameters for this iteration
+  params <- list(
+    n.trees = param_grid$n.trees[i],
+    interaction.depth = param_grid$interaction.depth[i],
+    shrinkage = param_grid$shrinkage[i],
+    n.minobsinnode = param_grid$n.minobsinnode[i],
+    distribution = "multinomial"  
+  )
+  
+  # Perform cross-validation with caret and gbm
+  ctrl <- trainControl(method = "cv", number = 5)
+  cv_result <- train(
+    x = df_filtered[train, -16],  # Exclude the response variable column
+    y = as.factor(y.train),
+    method = "gbm",
+    trControl = ctrl,
+    tuneGrid = data.frame(n.trees = params$n.trees, interaction.depth = params$interaction.depth, shrinkage = params$shrinkage, n.minobsinnode = params$n.minobsinnode)
+  )
+  
+  # Store the results
+  results[[paste0("n.trees_", params$n.trees, "_interaction_depth_", params$interaction.depth, "_shrinkage_", params$shrinkage)]] <- cv_result
+}
+
+# Get the best model
+#best_index <- which.min(sapply(results, function(x) x$RMSE))
+best_model <- results[[which.max(lapply(results, function(x) x$results$Accuracy))]]
+print(best_model)
+```
+
+```{r,include=FALSE}
+best_model <- readRDS("best_model_gbm1.rds")
+```
+
+The paramter values that we will use for the model are the following:
+```{r}
+model_parameters <- data.frame(
+  n.trees = best_model$bestTune$n.trees,
+  interaction.depth = best_model$bestTune$interaction.depth,
+  shrinkage = best_model$bestTune$shrinkage,
+  n.minobsinnode = best_model$bestTune$n.minobsinnode
+)
+
+# Print the dataframe
+print(model_parameters)
+```
+
+```{r,include=FALSE}
+load("final_model_gbm.RData")
+```
+
+
+```{r,eval=FALSE}
+
+  final_model <- train(
+  x = df_filtered[, -16],  # Exclude the response variable column
+  y = as.factor(df_filtered$track_genre),
+  method = "gbm",
+  trControl = trainControl(method = "none"),  # No resampling for final training
+  tuneGrid = data.frame(
+    n.trees = best_model$bestTune$n.trees,
+    interaction.depth = best_model$bestTune$interaction.depth,
+    shrinkage = best_model$bestTune$shrinkage,
+    n.minobsinnode = best_model$bestTune$n.minobsinnode
+  )
+)
+
+```
+
+```{r}
+test_predictions <- predict(final_model, newdata = df_filtered[test,-16])
+confusion_matrix <- table(test_predictions, y.test)
+accuracy <- sum(diag(confusion_matrix)) / sum(confusion_matrix)
+print(paste("Accuracy:", accuracy))
+```
+
+```{r}
+print(confusion_matrix)
+```
+
+```{r,include=FALSE}
+rownames(confusion_matrix)[5]<-"hip-hop"
+metrics <- confusionMatrix(confusion_matrix)
+
+# Extract precision, recall, F1-score, and specificity for each class
+precision <- metrics$byClass[, "Precision"]
+recall <- metrics$byClass[, "Recall"]
+f1_score <- metrics$byClass[, "F1"]
+specificity <- 1 - metrics$byClass[, "Sensitivity"]
+#accuracy <- metrics$byClass[,"Accuracy"]
+#str(metrics)
+# Create a data frame with the metrics
+metrics_df <- data.frame(
+  #Class = rownames(metrics$byClass),
+  Precision = precision,
+  Recall = recall,
+  F1_Score = f1_score,
+  Specificity = specificity
+  #Accuracy = accuracy
+)
+
+
+```
+
+```{r}
+# Print or use the metrics_df data frame
+print(metrics_df)
+```
+
+
+```{r}
+mai.old<-par()$mai
+mai.old
+#new vector
+mai.new<-mai.old
+#new space on the left
+mai.new[2] <- 2.5 
+mai.new
+#modify graphical parameters
+par(mai=mai.new,cex.axis=0.7)
+#summary(final_model, las=1) 
+#las=1 horizontal names on y
+summary(final_model, las=1, cBar=15) 
+#cBar defines how many variables
+#back to orginal window
+par(mai=mai.old)
+```
